@@ -36,7 +36,11 @@ jobs:
         run: ./init.sh
       - name: Build
         run: ./build.sh
+      - name: FindPath
+        run: |
+        AAR=$(find . -name '*.aar')
+        echo "AAR=$AAR"
       - uses: actions/upload-artifact@v2
         with:
           name: libcore.aar
-          path: ./lib/libcore.aar
+          path: ${{ env.AAR }}
