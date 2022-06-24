@@ -38,8 +38,8 @@ jobs:
         run: ./build.sh
       - name: FindPath
         run: |
-        AAR=$(find . -name '*.aar')
-        echo "AAR=$AAR"
+          AAR=$(find . -name '*.aar')
+          echo "AAR=$AAR"
       - uses: actions/upload-artifact@v2
         with:
           name: libcore.aar
