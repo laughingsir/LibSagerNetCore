@@ -1,12 +1,10 @@
 package gvisor
 
 import (
-	"errors"
 	"io"
 	"os"
 
 	"github.com/sirupsen/logrus"
-	"github.com/v2fly/v2ray-core/v5/common/buf"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
 	"gvisor.dev/gvisor/pkg/tcpip/link/sniffer"
@@ -16,11 +14,8 @@ import (
 	"gvisor.dev/gvisor/pkg/tcpip/transport/icmp"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/tcp"
 	"gvisor.dev/gvisor/pkg/tcpip/transport/udp"
-	"libcore/comm"
 	"libcore/tun"
 )
-
-//go:generate go run ../errorgen
 
 var _ tun.Tun = (*GVisor)(nil)
 
@@ -52,7 +47,7 @@ func New(dev int32, mtu int32, handler tun.Handler, nicId tcpip.NICID, pcap bool
 	}
 	var o stack.Options
 	switch ipv6Mode {
-	case comm.IPv6Disable:
+	case 0:
 		o = stack.Options{
 			NetworkProtocols: []stack.NetworkProtocolFactory{
 				ipv4.NewProtocol,
@@ -63,7 +58,7 @@ func New(dev int32, mtu int32, handler tun.Handler, nicId tcpip.NICID, pcap bool
 				icmp.NewProtocol4,
 			},
 		}
-	case comm.IPv6Only:
+	case 3:
 		o = stack.Options{
 			NetworkProtocols: []stack.NetworkProtocolFactory{
 				ipv6.NewProtocol,
@@ -99,28 +94,8 @@ func New(dev int32, mtu int32, handler tun.Handler, nicId tcpip.NICID, pcap bool
 			NIC:         nicId,
 		},
 	})
-
-	bufSize := buf.Size
-	s.SetTransportProtocolOption(tcp.ProtocolNumber, &tcpip.TCPReceiveBufferSizeRangeOption{
-		Min:     1,
-		Default: bufSize,
-		Max:     bufSize,
-	})
-	s.SetTransportProtocolOption(tcp.ProtocolNumber, &tcpip.TCPSendBufferSizeRangeOption{
-		Min:     1,
-		Default: bufSize,
-		Max:     bufSize,
-	})
-
-	sOpt := tcpip.TCPSACKEnabled(true)
-	s.SetTransportProtocolOption(tcp.ProtocolNumber, &sOpt)
-
-	mOpt := tcpip.TCPModerateReceiveBufferOption(true)
-	s.SetTransportProtocolOption(tcp.ProtocolNumber, &mOpt)
-
 	gTcpHandler(s, handler)
 	gUdpHandler(s, handler)
-	gIcmpHandler(s, endpoint, handler)
 	gMust(s.CreateNIC(nicId, endpoint))
 	gMust(s.SetSpoofing(nicId, true))
 	gMust(s.SetPromiscuousMode(nicId, true))
@@ -144,8 +119,4 @@ func gMust(err tcpip.Error) {
 	if err != nil {
 		logrus.Panicln(err.String())
 	}
-}
-
-func tcpipErr(err tcpip.Error) error {
-	return errors.New(err.String())
 }

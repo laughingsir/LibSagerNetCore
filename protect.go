@@ -9,37 +9,30 @@ import (
 	"time"
 
 	"github.com/sirupsen/logrus"
-	v2rayNet "github.com/v2fly/v2ray-core/v5/common/net"
-	"github.com/v2fly/v2ray-core/v5/features/dns"
-	"github.com/v2fly/v2ray-core/v5/transport/internet"
+	v2rayNet "github.com/v2fly/v2ray-core/v4/common/net"
+	"github.com/v2fly/v2ray-core/v4/features/dns"
+	"github.com/v2fly/v2ray-core/v4/transport/internet"
 	"golang.org/x/sys/unix"
 )
+
+var fdProtector Protector
 
 type Protector interface {
 	Protect(fd int32) bool
 }
 
-var noopProtectorInstance = &noopProtector{}
-
-type noopProtector struct{}
-
-func (n *noopProtector) Protect(int32) bool {
-	return true
+func SetProtector(protector Protector) {
+	fdProtector = protector
 }
 
 type protectedDialer struct {
-	protector Protector
-	resolver  func(ctx context.Context, domain string) ([]net.IP, error)
+	resolver func(domain string) ([]net.IP, error)
 }
 
 func (dialer protectedDialer) Dial(ctx context.Context, source v2rayNet.Address, destination v2rayNet.Destination, sockopt *internet.SocketConfig) (conn net.Conn, err error) {
-	if destination.Network == v2rayNet.Network_Unknown || destination.Address == nil {
-		panic("connect to invalid destination")
-	}
-
 	var ips []net.IP
 	if destination.Address.Family().IsDomain() {
-		ips, err = dialer.resolver(ctx, destination.Address.Domain())
+		ips, err = dialer.resolver(destination.Address.Domain())
 		if err == nil && len(ips) == 0 {
 			err = dns.ErrEmptyResponse
 		}
@@ -56,6 +49,7 @@ func (dialer protectedDialer) Dial(ctx context.Context, source v2rayNet.Address,
 				break
 			} else {
 				logrus.Warn("dial system failed: ", err)
+				time.Sleep(time.Millisecond * 200)
 			}
 			logrus.Debug("trying next address: ", ip.String())
 		}
@@ -76,8 +70,7 @@ func (dialer protectedDialer) dial(ctx context.Context, source v2rayNet.Address,
 		return nil, err
 	}
 
-	if !dialer.protector.Protect(int32(fd)) {
-		unix.Close(fd)
+	if !fdProtector.Protect(int32(fd)) {
 		return nil, errors.New("protect failed")
 	}
 
@@ -102,7 +95,6 @@ func (dialer protectedDialer) dial(ctx context.Context, source v2rayNet.Address,
 
 	err = unix.Connect(fd, sockaddr)
 	if err != nil {
-		unix.Close(fd)
 		return nil, err
 	}
 
@@ -110,7 +102,6 @@ func (dialer protectedDialer) dial(ctx context.Context, source v2rayNet.Address,
 	if file == nil {
 		return nil, errors.New("failed to connect to fd")
 	}
-	defer file.Close()
 
 	switch destination.Network {
 	case v2rayNet.Network_UDP:
@@ -133,6 +124,7 @@ func (dialer protectedDialer) dial(ctx context.Context, source v2rayNet.Address,
 		return nil, err
 	}
 
+	closeIgnore(file)
 	return conn, nil
 }
 

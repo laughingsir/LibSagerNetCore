@@ -2,15 +2,14 @@ package libcore
 
 import (
 	"bytes"
-	"context"
 	"flag"
 	"strconv"
 
 	"github.com/Dreamacro/clash/transport/ssr/obfs"
 	"github.com/Dreamacro/clash/transport/ssr/protocol"
-	"github.com/v2fly/v2ray-core/v5/common/buf"
-	"github.com/v2fly/v2ray-core/v5/proxy/shadowsocks"
-	"github.com/v2fly/v2ray-core/v5/transport/internet"
+	"github.com/v2fly/v2ray-core/v4/common/buf"
+	"github.com/v2fly/v2ray-core/v4/proxy/shadowsocks"
+	"github.com/v2fly/v2ray-core/v4/transport/internet"
 )
 
 var (
@@ -37,7 +36,7 @@ type shadowsocksrPlugin struct {
 	p protocol.Protocol
 }
 
-func (p *shadowsocksrPlugin) Init(_ context.Context, _ string, _ string, remoteHost string, remotePort string, _ string, pluginArgs []string, account *shadowsocks.MemoryAccount) error {
+func (p *shadowsocksrPlugin) Init(_ string, _ string, remoteHost string, remotePort string, _ string, pluginArgs []string, account *shadowsocks.MemoryAccount) error {
 	fs := flag.NewFlagSet("shadowsocksr", flag.ContinueOnError)
 	fs.StringVar(&p.obfs, "obfs", "origin", "")
 	fs.StringVar(&p.obfsParam, "obfs-param", "", "")
@@ -83,43 +82,32 @@ func (p *shadowsocksrPlugin) StreamConn(conn internet.Connection) internet.Conne
 	return p.o.StreamConn(conn)
 }
 
-func (p *shadowsocksrPlugin) ProtocolConn(conn *shadowsocks.ProtocolConn, iv []byte) {
-	upstream := buf.NewConnection(buf.ConnectionOutputMulti(conn), buf.ConnectionInputMulti(conn))
-	downstream := p.p.StreamConn(upstream, iv)
-	if upstream == downstream {
-		conn.ProtocolReader = conn
-		conn.ProtocolWriter = conn
-	} else {
-		conn.ProtocolReader = buf.NewReader(downstream)
-		conn.ProtocolWriter = buf.NewWriter(downstream)
-	}
+func (p *shadowsocksrPlugin) StreamReader(reader buf.Reader, iv []byte) (buf.Reader, error) {
+	conn := p.p.StreamConn(buf.NewConnection(buf.ConnectionOutputMulti(reader)), iv)
+	return buf.NewReader(conn), nil
 }
 
-func (p *shadowsocksrPlugin) EncodePacket(buffer *buf.Buffer, ivLen int32) (*buf.Buffer, error) {
-	defer buffer.Release()
+func (p *shadowsocksrPlugin) StreamWriter(writer buf.Writer, iv []byte) (buf.Writer, error) {
+	conn := p.p.StreamConn(buf.NewConnection(buf.ConnectionInputMulti(writer)), iv)
+	return buf.NewWriter(conn), nil
+}
+
+func (p *shadowsocksrPlugin) EncodePacket(buffer *buf.Buffer) (*buf.Buffer, error) {
 	packet := &bytes.Buffer{}
-	err := p.p.EncodePacket(packet, buffer.BytesFrom(ivLen))
+	err := p.p.EncodePacket(packet, buffer.Bytes())
+	buffer.Release()
 	if err != nil {
+		buffer.Release()
 		return nil, err
 	}
-	if ivLen > 0 {
-		newBuffer := buf.New()
-		newBuffer.Write(buffer.BytesTo(ivLen))
-		newBuffer.Write(packet.Bytes())
-		return newBuffer, nil
-	} else {
-		return buf.FromBytes(packet.Bytes()), nil
-	}
+	return buf.As(packet.Bytes()), nil
 }
 
 func (p *shadowsocksrPlugin) DecodePacket(buffer *buf.Buffer) (*buf.Buffer, error) {
-	defer buffer.Release()
 	packet, err := p.p.DecodePacket(buffer.Bytes())
+	buffer.Release()
 	if err != nil {
 		return nil, err
 	}
-	newBuffer := buf.New()
-	newBuffer.Write(packet)
-	newBuffer.Endpoint = buffer.Endpoint
-	return newBuffer, nil
+	return buf.As(packet), nil
 }

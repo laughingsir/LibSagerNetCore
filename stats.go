@@ -1,14 +1,8 @@
 package libcore
 
 import (
-	"container/list"
 	"net"
-	"sync"
 	"sync/atomic"
-
-	"github.com/v2fly/v2ray-core/v5/common"
-	"github.com/v2fly/v2ray-core/v5/common/buf"
-	"github.com/v2fly/v2ray-core/v5/transport/internet"
 )
 
 type AppStats struct {
@@ -27,8 +21,6 @@ type AppStats struct {
 }
 
 type appStats struct {
-	sync.Mutex
-
 	tcpConn      int32
 	udpConn      int32
 	tcpConnTotal uint32
@@ -40,8 +32,6 @@ type appStats struct {
 	downlinkTotal uint64
 
 	deactivateAt int64
-
-	connections list.List
 }
 
 type TrafficListener interface {
@@ -57,31 +47,26 @@ func (t *Tun2ray) ResetAppTraffics() {
 		return
 	}
 
+	t.access.RLock()
 	var toDel []uint16
-	t.appStats.Range(func(key, value interface{}) bool {
-		uid := key.(uint16)
-		toDel = append(toDel, uid)
-		return true
-	})
-	for _, uid := range toDel {
-		t.appStats.Delete(uid)
+	for uid, stat := range t.appStats {
+		atomic.StoreUint64(&stat.uplink, 0)
+		atomic.StoreUint64(&stat.downlink, 0)
+		atomic.StoreUint64(&stat.uplinkTotal, 0)
+		atomic.StoreUint64(&stat.downlinkTotal, 0)
+		if stat.tcpConn+stat.udpConn == 0 {
+			toDel = append(toDel, uid)
+		}
 	}
-}
+	t.access.RUnlock()
+	if len(toDel) > 0 {
+		t.access.Lock()
+		for _, uid := range toDel {
+			delete(t.appStats, uid)
+		}
+		t.access.Unlock()
+	}
 
-func (t *Tun2ray) CloseConnections(uid int32) {
-	if !t.trafficStats {
-		return
-	}
-	statsI, ok := t.appStats.Load(uint16(uid))
-	if !ok {
-		return
-	}
-	stats := statsI.(*appStats)
-	stats.Lock()
-	defer stats.Unlock()
-	for element := stats.connections.Front(); element != nil; element = element.Next() {
-		common.Close(element.Value)
-	}
 }
 
 func (t *Tun2ray) ReadAppTraffics(listener TrafficListener) error {
@@ -90,10 +75,8 @@ func (t *Tun2ray) ReadAppTraffics(listener TrafficListener) error {
 	}
 
 	var stats []*AppStats
-
-	t.appStats.Range(func(key, value interface{}) bool {
-		uid := key.(uint16)
-		stat := value.(*appStats)
+	t.access.RLock()
+	for uid, stat := range t.appStats {
 		export := &AppStats{
 			Uid:          int32(uid),
 			TcpConn:      stat.tcpConn,
@@ -114,8 +97,8 @@ func (t *Tun2ray) ReadAppTraffics(listener TrafficListener) error {
 		export.DownlinkTotal = int64(downlinkTotal)
 
 		stats = append(stats, export)
-		return true
-	})
+	}
+	t.access.RUnlock()
 
 	for _, stat := range stats {
 		listener.UpdateStats(stat)
@@ -124,31 +107,22 @@ func (t *Tun2ray) ReadAppTraffics(listener TrafficListener) error {
 	return nil
 }
 
-func NewStatsCounterConn(originConn net.Conn, uplink *uint64, downlink *uint64) *internet.StatCounterConn {
-	conn := new(internet.StatCounterConn)
-	conn.Connection = originConn
-	conn.ReadCounter = statsConnWrapper{uplink}
-	conn.WriteCounter = statsConnWrapper{downlink}
-	return conn
+type statsConn struct {
+	net.Conn
+	uplink   *uint64
+	downlink *uint64
 }
 
-type statsConnWrapper struct {
-	counter *uint64
+func (c *statsConn) Read(b []byte) (n int, err error) {
+	n, err = c.Conn.Read(b)
+	defer atomic.AddUint64(c.uplink, uint64(n))
+	return
 }
 
-func (w statsConnWrapper) Value() int64 {
-	return int64(atomic.LoadUint64(w.counter))
-}
-
-func (w statsConnWrapper) Set(i int64) int64 {
-	value := w.Value()
-	atomic.StoreUint64(w.counter, uint64(i))
-	return value
-}
-
-func (w statsConnWrapper) Add(i int64) int64 {
-	atomic.AddUint64(w.counter, uint64(i))
-	return 0
+func (c *statsConn) Write(b []byte) (n int, err error) {
+	n, err = c.Conn.Write(b)
+	defer atomic.AddUint64(c.downlink, uint64(n))
+	return
 }
 
 type statsPacketConn struct {
@@ -157,19 +131,26 @@ type statsPacketConn struct {
 	downlink *uint64
 }
 
-func (c statsPacketConn) readFrom() (buffer *buf.Buffer, addr net.Addr, err error) {
-	buffer, addr, err = c.packetConn.readFrom()
+func (c statsPacketConn) ReadFrom(p []byte) (n int, addr net.Addr, err error) {
+	n, addr, err = c.packetConn.ReadFrom(p)
 	if err == nil {
-		atomic.AddUint64(c.downlink, uint64(buffer.Len()))
+		atomic.AddUint64(c.downlink, uint64(n))
 	}
 	return
 }
 
-func (c statsPacketConn) writeTo(buffer *buf.Buffer, addr net.Addr) (err error) {
-	length := buffer.Len()
-	err = c.packetConn.writeTo(buffer, addr)
+func (c statsPacketConn) readFrom() (p []byte, addr net.Addr, err error) {
+	p, addr, err = c.packetConn.readFrom()
 	if err == nil {
-		atomic.AddUint64(c.uplink, uint64(length))
+		atomic.AddUint64(c.downlink, uint64(len(p)))
+	}
+	return
+}
+
+func (c statsPacketConn) WriteTo(p []byte, addr net.Addr) (n int, err error) {
+	n, err = c.packetConn.WriteTo(p, addr)
+	if err == nil {
+		atomic.AddUint64(c.uplink, uint64(n))
 	}
 	return
 }

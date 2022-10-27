@@ -5,8 +5,8 @@ import (
 	"net"
 	"strconv"
 
-	"github.com/v2fly/v2ray-core/v5/common/buf"
-	v2rayNet "github.com/v2fly/v2ray-core/v5/common/net"
+	"github.com/sirupsen/logrus"
+	v2rayNet "github.com/v2fly/v2ray-core/v4/common/net"
 	"gvisor.dev/gvisor/pkg/tcpip"
 	"gvisor.dev/gvisor/pkg/tcpip/buffer"
 	"gvisor.dev/gvisor/pkg/tcpip/header"
@@ -27,13 +27,13 @@ func gUdpHandler(s *stack.Stack, handler tun.Handler) {
 		srcAddr := net.JoinHostPort(id.RemoteAddress.String(), strconv.Itoa(int(id.RemotePort)))
 		src, err := v2rayNet.ParseDestination(fmt.Sprint("udp:", srcAddr))
 		if err != nil {
-			newError("[UDP] parse source address ", srcAddr, " failed: ", err).AtWarning().WriteToLog()
+			logrus.Warn("[UDP] parse source address ", srcAddr, " failed: ", err)
 			return true
 		}
 		dstAddr := net.JoinHostPort(id.LocalAddress.String(), strconv.Itoa(int(id.LocalPort)))
 		dst, err := v2rayNet.ParseDestination(fmt.Sprint("udp:", dstAddr))
 		if err != nil {
-			newError("[UDP] parse destination address ", dstAddr, " failed: ", err).AtWarning().WriteToLog()
+			logrus.Warn("[UDP] parse destination address ", dstAddr, " failed: ", err)
 			return true
 		}
 
@@ -49,7 +49,7 @@ func gUdpHandler(s *stack.Stack, handler tun.Handler) {
 			IP:   dst.Address.IP(),
 			Port: int(dst.Port),
 		}
-		go handler.NewPacket(src, dst, buf.FromBytes(data.ToView()), func(bytes []byte, addr *net.UDPAddr) (int, error) {
+		go handler.NewPacket(src, dst, data.ToView(), func(bytes []byte, addr *net.UDPAddr) (int, error) {
 			if addr == nil {
 				addr = destUdpAddr
 			}
@@ -107,7 +107,6 @@ func gSendUDP(r *stack.Route, data buffer.VectorisedView, localPort, remotePort 
 		ReserveHeaderBytes: header.UDPMinimumSize + int(r.MaxHeaderLength()),
 		Data:               data,
 	})
-	defer pkt.DecRef()
 
 	// Initialize the UDP header.
 	udpHdr := header.UDP(pkt.TransportHeader().Push(header.UDPMinimumSize))

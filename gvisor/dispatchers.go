@@ -133,12 +133,13 @@ func (d *readVDispatcher) dispatch() (bool, tcpip.Error) {
 	}
 
 	pkt := stack.NewPacketBuffer(stack.PacketBufferOptions{
-		Data:              d.buf.pullViews(n),
-		IsForwardedPacket: true,
+		Data: d.buf.pullViews(n),
 	})
-	defer pkt.DecRef()
 
-	var p tcpip.NetworkProtocolNumber
+	var (
+		p             tcpip.NetworkProtocolNumber
+		remote, local tcpip.LinkAddress
+	)
 
 	// We don't get any indication of what the packet is, so try to guess
 	// if it's an IPv4 or IPv6 packet.
@@ -156,7 +157,7 @@ func (d *readVDispatcher) dispatch() (bool, tcpip.Error) {
 		return true, nil
 	}
 
-	d.e.dispatcher.DeliverNetworkPacket(p, pkt)
+	d.e.dispatcher.DeliverNetworkPacket(remote, local, p, pkt)
 
 	return true, nil
 }

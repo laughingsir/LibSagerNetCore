@@ -1,4 +1,5 @@
 //go:build android
+// +build android
 
 package libcore
 
@@ -12,13 +13,14 @@ package libcore
 import "C"
 
 import (
+	"fmt"
 	"log"
 	"strings"
 	"unsafe"
 
 	"github.com/sirupsen/logrus"
-	appLog "github.com/v2fly/v2ray-core/v5/app/log"
-	commonLog "github.com/v2fly/v2ray-core/v5/common/log"
+	appLog "github.com/v2fly/v2ray-core/v4/app/log"
+	commonLog "github.com/v2fly/v2ray-core/v4/common/log"
 )
 
 var (
@@ -40,7 +42,8 @@ type androidHook struct{}
 type androidFormatter struct{}
 
 func (f *androidFormatter) Format(entry *logrus.Entry) ([]byte, error) {
-	return []byte(entry.Message), nil
+	msgWithLevel := fmt.Sprint("[", strings.Title(entry.Level.String()), "] ", entry.Message)
+	return []byte(msgWithLevel), nil
 }
 
 func (hook *androidHook) Levels() []logrus.Level {
@@ -84,8 +87,8 @@ func (w *v2rayLogWriter) Write(s string) error {
 	} else if strings.Contains(s, "[Info]") {
 		s = strings.Replace(s, "[Info]", "", 1)
 		priority = C.ANDROID_LOG_INFO
-	} else if strings.Contains(s, "[Warning]") {
-		s = strings.Replace(s, "[Warning]", "", 1)
+	} else if strings.Contains(s, "[Warn]") {
+		s = strings.Replace(s, "[Warn]", "", 1)
 		priority = C.ANDROID_LOG_WARN
 	} else if strings.Contains(s, "[Error]") {
 		s = strings.Replace(s, "[Error]", "", 1)
@@ -120,8 +123,7 @@ func init() {
 	logrus.AddHook(&androidHook{})
 
 	_ = appLog.RegisterHandlerCreator(appLog.LogType_Console, func(lt appLog.LogType,
-		options appLog.HandlerCreatorOptions,
-	) (commonLog.Handler, error) {
+		options appLog.HandlerCreatorOptions) (commonLog.Handler, error) {
 		return commonLog.NewLogger(func() commonLog.Writer {
 			return &v2rayLogWriter{}
 		}), nil
