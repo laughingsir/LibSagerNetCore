@@ -30,7 +30,7 @@ jobs:
         run: |
           ./init.sh
           ./build.sh
-	  - name: FindPath
+	    - name: FindPath
         run: |
           AAR=$(find . -name '*.aar')
           echo "AAR=$AAR"
